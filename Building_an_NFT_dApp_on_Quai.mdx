@@ -1,0 +1,270 @@
+---
+title: Building an NFT dApp on Quai
+---
+
+## Introduction
+
+Today we’re going to be building an NFT dApp on Quai complete with a web interface for interacting with it and managing some of the properties like mint price and total supply.
+
+To have the best experience when following this guide, use the Chrome browser on either macOS or Linux. Additionally, download and install VSCode if you don’t already have it as we’ll be working both in the terminal and editing code directly to build this app.
+
+## Prerequisites
+
+### Get a Quai Wallet with Funds
+
+To build this app, you will need a wallet with some funds.
+
+1. Download the Pelagus wallet from [pelaguswallet.io](https://pelaguswallet.io/).
+2. Acquire some testnet Quai from [faucet.quai.network](https://faucet.quai.network).
+
+## Setup the Development Environment
+
+Depending on your system, there are various ways to set up your development environment. In this tutorial, we’ll be using macOS.
+
+### Install VSCode
+
+1. Download and install VSCode from [https://code.visualstudio.com/](https://code.visualstudio.com/).
+2. Open a terminal in VSCode using the top menu.
+
+### Install Node.js
+
+Since we’re building a Next.js application, make sure Node.js is installed. Follow the instructions for installing Node.js on macOS from [https://nodejs.org/en/download/package-manager/](https://nodejs.org/en/download/package-manager/).
+
+- This will set up `nvm`, a package manager for Node.js, allowing you to switch versions if needed.
+- Install Node.js version 22 with:
+
+```bash
+nvm install 22
+```
+
+- Verify the version with:
+
+```bash
+node -v
+```
+
+- To use `nvm` in other terminals, update your zsh profile:
+
+```bash
+nano ~/.zshrc
+```
+
+Add the following to the end of the file:
+
+```bash
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+```
+
+Save and exit by pressing CTRL-X, then Y.
+
+### Create Development Directory
+
+1. Make a directory for your development work:
+
+```bash
+mkdir ~/Devspace && cd ~/Devspace
+```
+
+2. Initialize a new Next.js app:
+
+```bash
+npx create-next-app@latest
+```
+
+## Building and Deploying the NFT Smart Contract
+
+### Reference Repository
+
+We’ll use the official Hardhat example repo provided by Dominant Strategies (the development team behind Quai) as a reference: [https://github.com/dominant-strategies/hardhat-example](https://github.com/dominant-strategies/hardhat-example).
+
+The reference repo includes examples for both regular (single-chain) Solidity and SolidityX (for cross-chain transactions). For simplicity, we’ll focus on Solidity.
+
+### Install Dependencies
+
+Install the following dependencies:
+
+```bash
+npm i @openzeppelin/contracts
+npm i dotenv
+npm i hardhat
+npm i --save-dev @nomicfoundation/hardhat-toolbox
+npm i quais
+```
+
+### Initialize Hardhat
+
+1. Initialize a new Hardhat project:
+
+```bash
+npx hardhat init
+```
+
+2. Select defaults when prompted. This creates a basic folder structure and examples.
+
+3. Configure Hardhat by replacing `hardhat.config.js` with:
+
+```javascript
+/**
+ * @type import('hardhat/config').HardhatUserConfig
+ */
+
+require('@nomicfoundation/hardhat-toolbox');
+const dotenv = require('dotenv');
+dotenv.config({ path: './.env.local' });
+
+module.exports = {
+  defaultNetwork: 'cyprus1',
+  networks: {
+    cyprus1: {
+      url: process.env.RPC_URL,
+      accounts: [process.env.CYPRUS1_PK],
+      chainId: Number(process.env.CHAIN_ID),
+    },
+  },
+  solidity: {
+    version: '0.8.20',
+    settings: {
+      optimizer: {
+        enabled: true,
+        runs: 1000,
+      },
+      evmVersion: 'london',
+    },
+  },
+  paths: {
+    sources: './contracts',
+    cache: './cache',
+    artifacts: './artifacts',
+  },
+  mocha: {
+    timeout: 20000,
+  },
+};
+```
+
+4. Create a `.env.local` file in the root directory:
+
+```bash
+CYPRUS1_PK="your_private_key"
+INITIAL_OWNER="your_public_key"
+CHAIN_ID="9000"
+RPC_URL="https://rpc.quai.network"
+```
+
+Replace `CYPRUS1_PK` and `INITIAL_OWNER` with your wallet’s private and public keys, respectively.
+
+### Write the Smart Contract
+
+1. Create an `ERC721.sol` file in the `contracts` folder:
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
+
+contract TestERC721 is ERC721URIStorage, Ownable {
+    uint256 public tokenIds = 0;
+    uint256 public mintPrice = (5 ether);
+    uint256 public supply = 10000;
+
+    constructor(address initialOwner) Ownable(initialOwner) ERC721("TestERC721", "TNFT") { }
+
+    function mint(address _recipient, string memory _tokenURI) public payable returns (uint256) {
+        require(msg.value == mintPrice, "5 QUAI to Mint");
+        uint256 tokenId = tokenIds;
+        require(tokenId < supply, "No more NFTs");
+        _mint(_recipient, tokenId);
+        _setTokenURI(tokenId, _tokenURI);
+        tokenIds += 1;
+        return tokenId;
+    }
+
+    function burn(uint256 tokenId) external {
+        require(ownerOf(tokenId) == msg.sender, "Only the owner can burn the NFT");
+        _burn(tokenId);
+    }
+
+    function updateSupply(uint256 _supply) public onlyOwner returns (uint256) {
+        require(_supply > tokenIds, "New supply must exceed current supply");
+        supply = _supply;
+        return supply;
+    }
+
+    function updateMintPrice(uint256 _price) public onlyOwner returns (uint256) {
+        mintPrice = _price;
+        return mintPrice;
+    }
+
+    function withdraw() public onlyOwner returns (bool) {
+        (bool success, ) = owner().call{value: address(this).balance}("");
+        require(success, "Withdraw failed");
+        return true;
+    }
+}
+```
+
+2. Delete `Lock.sol` to prevent Hardhat from including unnecessary files.
+
+3. Compile the smart contract:
+
+```bash
+npx hardhat compile
+```
+
+### Deploy the Contract
+
+1. Create a `scripts` folder with a `deployERC721.js` file:
+
+```javascript
+const quais = require('quais');
+const TestNFT = require('../artifacts/contracts/ERC721.sol/TestERC721.json');
+require('dotenv').config();
+
+const tokenArgs = [process.env.INITIAL_OWNER];
+
+async function deployERC721() {
+    const provider = new quais.JsonRpcProvider(hre.network.config.url, undefined, { usePathing: true });
+    const wallet = new quais.Wallet(hre.network.config.accounts[0], provider);
+    const ERC721 = new quais.ContractFactory(TestNFT.abi, TestNFT.bytecode, wallet);
+
+    const erc721 = await ERC721.deploy(...tokenArgs);
+    console.log('Transaction broadcasted:', erc721.deploymentTransaction().hash);
+
+    await erc721.waitForDeployment();
+    console.log('Contract deployed to:', await erc721.getAddress());
+}
+
+deployERC721()
+  .then(() => process.exit(0))
+  .catch((error) => {
+      console.error(error);
+      process.exit(1);
+  });
+```
+
+2. Deploy the contract:
+
+```bash
+npx hardhat run scripts/deployERC721.js
+```
+
+Monitor the transaction on [Quaiscan](https://quaiscan.io/). Save the contract address for later use.
+
+## Building the dApp
+
+Follow the full tutorial for creating the web interface in the additional steps provided. Once completed, run the application locally using:
+
+```bash
+npm run dev
+```
+
+Open the browser at `https://localhost:3000` to interact with your dApp.
+
+## Summary
+
+Congratulations! You’ve successfully built and deployed an NFT dApp on Quai. Explore further enhancements by integrating metadata, creating unique artwork, or launching on NFT marketplaces like [QuaiMark](https://quaimark.com).
